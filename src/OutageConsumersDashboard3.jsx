@@ -1,39 +1,29 @@
-// File: src/OutageConsumersDashboard.jsx (LIGHT, mobile-first + CSV import)
-// UX summary:
-// - Import CSV (or auto-load default from /public/data/feeders_substations.csv)
-// - Pick a feeder from a dropdown (or "All feeders")
-// - Toggle feeder ON/OFF or individual substations
-// - Donut shows % affected; legend is outside (no overlap)
-// - Mobile-first: tables become tap-friendly cards on phones
+// File: src/OutageConsumersDashboard.jsx
+// Modes:
+//  - Viewer (default): donut + % + OFF/ON counts, no toggles/tables
+//  - Admin (?admin=1): full UI (import/export, toggles, tables)
 
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
 export default function OutageConsumersDashboard() {
-  // Data
-  const [stations, setStations] = useState([]); // {id, feeder, name, consumers, isOut}
-  const [feederOut, setFeederOut] = useState({}); // { [feederName]: boolean }
+  // ----- MODE / FLAGS -----
+  const viewerOnly = (() => {
+    if (typeof window === "undefined") return true;
+    if (typeof window.VIEWER_ONLY === "boolean") return window.VIEWER_ONLY;
+    const p = new URLSearchParams(window.location.search);
+    // viewer by default; admin ONLY when ?admin=1
+    return p.get("admin") === "1" ? false : true;
+  })();
 
-  // UI state
-  const [q, setQ] = useState("");
-  const [showAffectedOnly, setShowAffectedOnly] = useState(false);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
-  const [selectedFeeder, setSelectedFeeder] = useState("ALL"); // "ALL" or feeder name
-
-  // Default CSV served from the public folder (works locally & on Netlify)
+  // If you set this in index.html you can override the CSV path:
   const DEFAULT_CSV_URL = `${import.meta.env.BASE_URL}data/feeders_substations.csv`;
-
-  // Optional runtime flags (safe to keep even if not used now)
-  const viewerOnly   = typeof window !== 'undefined' && window.VIEWER_ONLY === true;
-  const useFunctions = typeof window !== 'undefined' && window.USE_FUNCTIONS === true;
   const REMOTE_CSV_URL =
-    (typeof window !== 'undefined' && window.REMOTE_CSV_URL) ||
-    DEFAULT_CSV_URL;
+    (typeof window !== "undefined" && window.REMOTE_CSV_URL) || DEFAULT_CSV_URL;
   const DATA_CSV_URL = REMOTE_CSV_URL;
 
-  // Light palette (color-blind friendly: Okabe–Ito)
+  // ----- COLORS (okabe-ito) -----
   const C = {
     bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a",
     subtext: "#475569", accent: "#2563eb", accentBorder: "#3b82f6",
@@ -41,7 +31,16 @@ export default function OutageConsumersDashboard() {
     affectedBg: "#FDE5D6", healthyBg: "#DDECF7", affectedBorder: "#F3B493", healthyBorder: "#9CC3E6"
   };
 
-  // Build feeder index and compute totals (effective outage = feederOut || station.isOut)
+  // ----- STATE -----
+  const [stations, setStations] = useState([]); // {id, feeder, name, consumers, isOut}
+  const [feederOut, setFeederOut] = useState({}); // { [feederName]: boolean }
+  const [q, setQ] = useState("");
+  const [showAffectedOnly, setShowAffectedOnly] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [selectedFeeder, setSelectedFeeder] = useState("ALL"); // "ALL" or feeder name
+
+  // ----- DATA BUILD -----
   const { feeders, totals } = useMemo(() => {
     const groups = new Map();
     let total = 0, affected = 0;
@@ -66,7 +65,7 @@ export default function OutageConsumersDashboard() {
     return { feeders: Array.from(groups.values()).sort((a,b)=>a.name.localeCompare(b.name)), totals: { total, affected, healthy, pct } };
   }, [stations, feederOut]);
 
-  // Flat list with effective outage flags
+  // Flat with effective outage flags
   const flatRows = useMemo(() => {
     const list = [];
     for (const f of feeders) {
@@ -75,33 +74,7 @@ export default function OutageConsumersDashboard() {
     return list;
   }, [feeders, feederOut]);
 
-  // Filtered rows by feeder/search/affected-only
-  const filteredRows = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    let rows = flatRows;
-    if (selectedFeeder !== "ALL") rows = rows.filter(r => r.feeder === selectedFeeder);
-    if (needle) rows = rows.filter(r => r.name.toLowerCase().includes(needle) || r.feeder.toLowerCase().includes(needle));
-    if (showAffectedOnly) rows = rows.filter(r => r.effOut);
-    return rows.sort((a,b) => a.name.localeCompare(b.name));
-  }, [flatRows, q, showAffectedOnly, selectedFeeder]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
-  useEffect(() => { if (page > totalPages) setPage(1); }, [filteredRows.length, pageSize]);
-
-  // Auto-load default CSV on first load (silently fails if file is missing)
-  useEffect(() => { loadDefaultCsv(true); }, []);
-
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return filteredRows.slice(start, start + pageSize);
-  }, [filteredRows, page, pageSize]);
-
-  const chartData = [
-    { name: "Affected", value: totals.affected },
-    { name: "Healthy", value: totals.healthy },
-  ];
-
-  // Substation counts (global and per selected feeder)
+  // Substation counts (global + per feeder)
   const stationCounts = useMemo(() => {
     const total = flatRows.length;
     let off = 0;
@@ -122,10 +95,34 @@ export default function OutageConsumersDashboard() {
     return { total, off, on, offPct };
   }, [flatRows, selectedFeeder]);
 
-  // Mobile breakpoint helper
-  const isMobile = useIsMobile(768);
+  // Search/filter/pagination
+  const filteredRows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    let rows = flatRows;
+    if (selectedFeeder !== "ALL") rows = rows.filter(r => r.feeder === selectedFeeder);
+    if (needle) rows = rows.filter(r => r.name.toLowerCase().includes(needle) || r.feeder.toLowerCase().includes(needle));
+    if (showAffectedOnly) rows = rows.filter(r => r.effOut);
+    return rows.sort((a,b) => a.name.localeCompare(b.name));
+  }, [flatRows, q, showAffectedOnly, selectedFeeder]);
 
-  // Measure chart box to keep donut fully inside on small screens
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  useEffect(() => { if (page > totalPages) setPage(1); }, [filteredRows.length, pageSize]);
+
+  // Load default CSV on start
+  useEffect(() => { loadDefaultCsv(true); }, []);
+
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, page, pageSize]);
+
+  const chartData = [
+    { name: "Affected", value: totals.affected },
+    { name: "Healthy", value: totals.healthy },
+  ];
+
+  // Mobile + donut sizing
+  const isMobile = useIsMobile(768);
   const chartBoxRef = React.useRef(null);
   const [chartBox, setChartBox] = useState({ w: 0, h: 0 });
   useEffect(() => {
@@ -142,7 +139,7 @@ export default function OutageConsumersDashboard() {
   const innerR = Math.floor(outerR * 0.6);
   const pctFont = Math.round(Math.max(18, Math.min(48, outerR * 0.42)));
 
-  // ----- Actions -----
+  // ----- ACTIONS -----
   async function loadDefaultCsv(silent = true) {
     try {
       const res = await fetch(DATA_CSV_URL, { cache: 'no-store' });
@@ -199,113 +196,71 @@ export default function OutageConsumersDashboard() {
   }
 
   function toggleFeeder(name) {
+    if (viewerOnly) return; // viewer cannot toggle
     setFeederOut(prev => ({ ...prev, [name]: !prev[name] }));
   }
 
   function toggleStation(id) {
+    if (viewerOnly) return; // viewer cannot toggle
     setStations(prev => prev.map(s => (s.id === id ? { ...s, isOut: !s.isOut } : s)));
   }
-
-  // ---- Small mobile card renderers ----
-  const StationCard = (r) => (
-    <div key={r.id} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, background: C.card, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <div style={{ fontWeight: 600 }}>{r.name}</div>
-        <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
-          {r.effOut ? 'OFF' : 'ON'}
-        </span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', color: C.subtext }}>
-        <div>Feeder: <span style={{ fontWeight: 600 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(r.feeder), display: 'inline-block', marginRight: 6 }}></span>{r.feeder}</span></div>
-        <div><b>{Number(r.consumers).toLocaleString()}</b> consumers</div>
-      </div>
-      <div style={{ display: 'flex', gap: 12 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} style={{ transform: 'scale(1.3)' }} /> Feeder OFF
-        </label>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} style={{ transform: 'scale(1.3)' }} /> Substation OFF
-        </label>
-      </div>
-    </div>
-  );
-
-  const FeederCard = (f) => (
-    <div key={f.name} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, background: C.card, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(f.name), display: 'inline-block' }}></span>
-          <div style={{ fontWeight: 700 }}>{f.name}</div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={!!feederOut[f.name]} onChange={() => toggleFeeder(f.name)} style={{ transform: 'scale(1.3)' }} /> OFF
-          </label>
-          <button onClick={() => setSelectedFeeder(f.name)} style={btnOutline(C)}>View</button>
-        </div>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', color: C.subtext }}>
-        <div>Total: <b>{f.total.toLocaleString()}</b></div>
-        <div>Affected: <b style={{ color: C.affected }}>{f.affected.toLocaleString()}</b></div>
-        <div>%: <b>{f.total ? Math.round((f.affected / f.total) * 1000) / 10 : 0}%</b></div>
-      </div>
-    </div>
-  );
 
   // ----- UI -----
   return (
     <div style={{ minHeight: "100vh", padding: 12, background: C.bg, color: C.text }}>
       <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-        {/* Top bar */}
-        <div style={{ display: "flex", gap: 8, alignItems: isMobile ? "stretch" : "center", flexDirection: isMobile ? "column" : "row", flexWrap: "wrap", marginBottom: 8, position: "sticky", top: 0, background: C.bg, zIndex: 10, paddingTop: 6 }}>
-          <input id="csvFile" type="file" accept=".csv,text/csv" onChange={importCsv} style={{ display: "none" }} />
-          <label htmlFor="csvFile" style={btn(C)}>Import CSV</label>
-          <button onClick={exportCsv} style={btnOutline(C)}>Export</button>
-          <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Load default CSV</button>
+        {/* Top bar (ADMIN ONLY) */}
+        {!viewerOnly && (
+          <div style={{ display: "flex", gap: 8, alignItems: isMobile ? "stretch" : "center", flexDirection: isMobile ? "column" : "row", flexWrap: "wrap", marginBottom: 8, position: "sticky", top: 0, background: C.bg, zIndex: 10, paddingTop: 6 }}>
+            <input id="csvFile" type="file" accept=".csv,text/csv" onChange={importCsv} style={{ display: "none" }} />
+            <label htmlFor="csvFile" style={btn(C)}>Import CSV</label>
+            <button onClick={exportCsv} style={btnOutline(C)}>Export</button>
+            <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Load default CSV</button>
 
-          {/* Feeder dropdown */}
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
-            Feeder
-            <select
-              value={selectedFeeder}
-              onChange={(e)=>{ setSelectedFeeder(e.target.value); setPage(1); }}
-              style={{ padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text }}
-            >
-              <option value="ALL">All feeders</option>
-              {feeders.map(f => (
-                <option key={f.name} value={f.name}>{f.name}</option>
-              ))}
-            </select>
-          </label>
-
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              placeholder="Search substation or feeder"
-              value={q}
-              onChange={(e) => { setQ(e.target.value); setPage(1); }}
-              style={{ padding: "12px 14px", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text, width: isMobile ? "100%" : 260, fontSize: isMobile ? 16 : 14 }}
-            />
+            {/* Feeder dropdown */}
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
-              <input type="checkbox" checked={showAffectedOnly} onChange={(e)=>{ setShowAffectedOnly(e.target.checked); setPage(1); }} />
-              Affected only
+              Feeder
+              <select
+                value={selectedFeeder}
+                onChange={(e)=>{ setSelectedFeeder(e.target.value); setPage(1); }}
+                style={{ padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text }}
+              >
+                <option value="ALL">All feeders</option>
+                {feeders.map(f => (
+                  <option key={f.name} value={f.name}>{f.name}</option>
+                ))}
+              </select>
             </label>
-            {!isMobile && (
+
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                placeholder="Search substation or feeder"
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setPage(1); }}
+                style={{ padding: "12px 14px", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff", color: C.text, width: isMobile ? "100%" : 260, fontSize: isMobile ? 16 : 14 }}
+              />
               <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
-                Page size
-                <select value={pageSize} onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 8 }}>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                  <option value={10000}>All</option>
-                </select>
+                <input type="checkbox" checked={showAffectedOnly} onChange={(e)=>{ setShowAffectedOnly(e.target.checked); setPage(1); }} />
+                Affected only
               </label>
-            )}
+              {!isMobile && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
+                  Page size
+                  <select value={pageSize} onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                    <option value={10000}>All</option>
+                  </select>
+                </label>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Stats + Chart */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr", gap: 8, marginBottom: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: (isMobile || viewerOnly) ? "1fr" : "2fr 1fr", gap: 8, marginBottom: 8 }}>
           <div style={card(C)}>
             <div ref={chartBoxRef} style={{ position: "relative", height: isMobile ? 300 : 340, padding: 8, boxSizing: 'border-box' }}>
               <ResponsiveContainer width="100%" height="100%">
@@ -338,7 +293,7 @@ export default function OutageConsumersDashboard() {
               {totals.total === 0 && (
                 <div style={{ padding: 12, textAlign: 'center', color: C.subtext }}>
                   No data yet. {viewerOnly ? (
-                    <span>Ask the admin to open <b>?admin=1</b> and click <b>Publish live</b>.</span>
+                    <span>Ask the admin to open <b>?admin=1</b> and update.</span>
                   ) : (
                     <span>Load a CSV to begin.</span>
                   )}
@@ -357,234 +312,93 @@ export default function OutageConsumersDashboard() {
               </div>
             </div>
 
-            {/* External legend below chart (no overlap) */}
-            <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", padding: "8px 0 12px" }} aria-label="Chart legend">
-              <LegendItem color={C.affected} label="Affected" value={totals.affected} total={totals.total} />
-              <LegendItem color={C.healthy} label="Healthy" value={totals.healthy} total={totals.total} />
-            </div>
+            {/* Legend / KPI row under the chart */}
+            {!viewerOnly ? (
+              <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", padding: "8px 0 12px" }} aria-label="Chart legend">
+                <LegendItem color={C.affected} label="Affected" value={totals.affected} total={totals.total} />
+                <LegendItem color={C.healthy} label="Healthy" value={totals.healthy} total={totals.total} />
+              </div>
+            ) : (
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", padding: "8px 0 12px" }}>
+                <KpiChip label="Substations OFF" value={stationCounts.off.toLocaleString()} color={C.affected} />
+                <KpiChip label="Substations ON"  value={stationCounts.on.toLocaleString()}  color={C.healthy} />
+              </div>
+            )}
           </div>
 
-          <div style={card(C)}>
-            <div style={{ padding: 16 }}>
-              <div style={{ fontSize: 12, color: C.subtext }}>Affected consumers</div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{totals.affected.toLocaleString()}</div>
+          {/* Stats card (ADMIN ONLY) */}
+          {!viewerOnly && (
+            <div style={card(C)}>
+              <div style={{ padding: 16 }}>
+                <div style={{ fontSize: 12, color: C.subtext }}>Affected consumers</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{totals.affected.toLocaleString()}</div>
 
-              <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Total consumers</div>
-              <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.total.toLocaleString()}</div>
+                <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Total consumers</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.total.toLocaleString()}</div>
 
-              <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Affected percentage</div>
-              <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.pct}%</div>
+                <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Affected percentage</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.pct}%</div>
 
-              <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}` }} />
+                <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}` }} />
 
-              {/* Substation counts */}
-              <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Substations OFF</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: C.affected }}>
-                {((feederStationCounts?.off ?? stationCounts.off)).toLocaleString()} <span style={{ fontSize: 12, color: C.subtext }}>
-                  of {(feederStationCounts?.total ?? stationCounts.total).toLocaleString()} ({(feederStationCounts?.offPct ?? stationCounts.offPct)}%)
-                </span>
-              </div>
-              <div style={{ marginTop: 8, fontSize: 12, color: C.subtext }}>Substations ON</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: C.healthy }}>
-                {((feederStationCounts ? feederStationCounts.on : stationCounts.on)).toLocaleString()}
+                {/* Substation counts */}
+                <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Substations OFF</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.affected }}>
+                  {((feederStationCounts?.off ?? stationCounts.off)).toLocaleString()} <span style={{ fontSize: 12, color: C.subtext }}>
+                    of {(feederStationCounts?.total ?? stationCounts.total).toLocaleString()} ({(feederStationCounts?.offPct ?? stationCounts.offPct)}%)
+                  </span>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: C.subtext }}>Substations ON</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.healthy }}>
+                  {((feederStationCounts ? feederStationCounts.on : stationCounts.on)).toLocaleString()}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* ALL view with search → Stations across feeders */}
-        {selectedFeeder === "ALL" && (q.trim() || showAffectedOnly) ? (
-          <div style={card(C)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header }}>
-              <div style={{ fontWeight: 600 }}>Substations (search across all feeders)</div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ fontSize: 12, color: C.subtext }}>{filteredRows.length} result(s)</div>
-                <button onClick={() => { setQ(""); setShowAffectedOnly(false); setPage(1); }} style={btnOutline(C)}>Clear search</button>
-              </div>
-            </div>
-            {isMobile ? (
-              <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {pageRows.map(r => <StationCard key={r.id} {...r} />)}
-                {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this search.</div>}
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: C.subtext }}>
-                      <th style={thStyle(C)}>Feeder</th>
-                      <th style={thStyle(C)}>Substation</th>
-                      <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Feeder</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageRows.map(r => (
-                      <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                        <td style={tdStyle}>
-                          <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(r.feeder), display: "inline-block", marginRight: 6 }}></span>
-                          {r.feeder}
-                        </td>
-                        <td style={tdStyle}>{r.name}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} />
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} />
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
-                            {r.effOut ? "OFF" : "ON"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {pageRows.length === 0 && (
-                      <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.subtext }}>No rows match this search.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, borderTop: `1px solid ${C.border}`, color: C.subtext }}>
-              <div>
-                Showing <b>{filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}</b>–<b>{Math.min(page * pageSize, filteredRows.length)}</b> of <b>{filteredRows.length}</b>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {isMobile ? null : <button onClick={() => setPage(1)} disabled={page === 1} style={pagerBtn(C, page === 1)}>« First</button>}
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pagerBtn(C, page === 1)}>‹ Prev</button>
-                <div style={{ padding: "4px 8px" }}>{isMobile ? `Page ${page}` : `Page ${page} / ${totalPages}`}</div>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Next ›</button>
-                {isMobile ? null : <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Last »</button>}
-              </div>
-            </div>
-          </div>
-        ) : selectedFeeder === "ALL" ? (
-          // Feeders table (default ALL view)
-          <div style={card(C)}>
-            <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header, fontWeight: 600 }}>Feeders</div>
-            {isMobile ? (
-              <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {feeders.map(f => <FeederCard key={f.name} {...f} />)}
-                {feeders.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>Import a CSV to begin.</div>}
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: C.subtext }}>
-                      <th style={thStyle(C)}>Feeder</th>
-                      <th style={{ ...thStyle(C), textAlign: "right" }}>Total</th>
-                      <th style={{ ...thStyle(C), textAlign: "right" }}>Affected</th>
-                      <th style={{ ...thStyle(C), textAlign: "right" }}>%</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>View</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {feeders.map(f => (
-                      <tr key={f.name} style={{ borderTop: `1px solid ${C.border}` }}>
-                        <td style={tdStyle}>
-                          <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(f.name), display: "inline-block", marginRight: 6 }}></span>
-                          {f.name}
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>{f.total.toLocaleString()}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", color: C.affected }}>{f.affected.toLocaleString()}</td>
-                        <td style={{ ...tdStyle, textAlign: "right" }}>{f.total ? Math.round((f.affected / f.total) * 1000) / 10 : 0}%</td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <input type="checkbox" checked={!!feederOut[f.name]} onChange={() => toggleFeeder(f.name)} />
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <button onClick={() => setSelectedFeeder(f.name)} style={btnOutline(C)}>View</button>
-                        </td>
-                      </tr>
-                    ))}
-                    {feeders.length === 0 && (
-                      <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.subtext }}>Import a CSV to begin.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        ) : (
-          // Selected feeder → Substations table/cards
-          <div style={card(C)}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(selectedFeeder), display: "inline-block" }}></span>
-                <strong>{selectedFeeder}</strong>
-                <span style={{ fontSize: 12, color: C.subtext }}>
-                  {(() => { const f = feeders.find(x => x.name === selectedFeeder); const sc = feederStationCounts; return f ? `${f.affected.toLocaleString()} / ${f.total.toLocaleString()} affected • OFF ${(sc?.off ?? 0).toLocaleString()}/${(sc?.total ?? 0).toLocaleString()} substations` : ""; })()}
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
-                  <span>{feederOut[selectedFeeder] ? "OFF" : "ON"}</span>
-                  <input type="checkbox" checked={!!feederOut[selectedFeeder]} onChange={() => toggleFeeder(selectedFeeder)} />
-                </label>
-                <button onClick={() => setSelectedFeeder("ALL")} style={btnOutline(C)}>Show all feeders</button>
-              </div>
-            </div>
-
-            {isMobile ? (
-              <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {pageRows.map(r => <StationCard key={r.id} {...r} />)}
-                {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this filter.</div>}
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-                  <thead>
-                    <tr style={{ textAlign: "left", color: C.subtext }}>
-                      <th style={thStyle(C)}>Substation</th>
-                      <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pageRows.map(r => (
-                      <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
-                        <td style={tdStyle}>{r.name}</td>
-                        <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[selectedFeeder]} />
-                        </td>
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
-                          <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
-                            {r.effOut ? "OFF" : "ON"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {pageRows.length === 0 && (
-                      <tr><td colSpan={4} style={{ padding: 24, textAlign: "center", color: C.subtext }}>No rows match this filter.</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, borderTop: `1px solid ${C.border}`, color: C.subtext }}>
-              <div>
-                Showing <b>{filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}</b>–<b>{Math.min(page * pageSize, filteredRows.length)}</b> of <b>{filteredRows.length}</b>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {isMobile ? null : <button onClick={() => setPage(1)} disabled={page === 1} style={pagerBtn(C, page === 1)}>« First</button>}
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pagerBtn(C, page === 1)}>‹ Prev</button>
-                <div style={{ padding: "4px 8px" }}>{isMobile ? `Page ${page}` : `Page ${page} / ${totalPages}`}</div>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Next ›</button>
-                {isMobile ? null : <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Last »</button>}
-              </div>
-            </div>
-          </div>
+        {/* ADMIN TABLES ONLY */}
+        {!viewerOnly && (
+          selectedFeeder === "ALL" ? (
+            <AdminAllView
+              C={C}
+              isMobile={isMobile}
+              feeders={feeders}
+              q={q}
+              setQ={setQ}
+              showAffectedOnly={showAffectedOnly}
+              setShowAffectedOnly={setShowAffectedOnly}
+              pageRows={pageRows}
+              filteredRows={filteredRows}
+              page={page}
+              setPage={setPage}
+              pageSize={pageSize}
+              setPageSize={setPageSize}
+              totalPages={totalPages}
+              feederOut={feederOut}
+              toggleFeeder={toggleFeeder}
+              toggleStation={toggleStation}
+              selectedFeeder={selectedFeeder}
+              setSelectedFeeder={setSelectedFeeder}
+            />
+          ) : (
+            <AdminFeederView
+              C={C}
+              isMobile={isMobile}
+              feeders={feeders}
+              selectedFeeder={selectedFeeder}
+              setSelectedFeeder={setSelectedFeeder}
+              feederOut={feederOut}
+              toggleFeeder={toggleFeeder}
+              pageRows={pageRows}
+              toggleStation={toggleStation}
+              filteredRows={filteredRows}
+              page={page}
+              setPage={setPage}
+              pageSize={pageSize}
+              totalPages={totalPages}
+            />
+          )
         )}
 
         {/* Small note */}
@@ -595,6 +409,192 @@ export default function OutageConsumersDashboard() {
     </div>
   );
 }
+
+/* ---------- Admin-only views (split out for readability) ---------- */
+
+function AdminAllView(props) {
+  const { C, isMobile, feeders, q, setQ, showAffectedOnly, setShowAffectedOnly,
+          pageRows, filteredRows, page, setPage, pageSize, setPageSize, totalPages,
+          feederOut, toggleFeeder, toggleStation, selectedFeeder, setSelectedFeeder } = props;
+
+  const StationCard = (r) => (
+    <div key={r.id} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, background: C.card, display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+        <div style={{ fontWeight: 600 }}>{r.name}</div>
+        <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
+          {r.effOut ? 'OFF' : 'ON'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', color: C.subtext }}>
+        <div>Feeder: <span style={{ fontWeight: 600 }}><span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(r.feeder), display: 'inline-block', marginRight: 6 }}></span>{r.feeder}</span></div>
+        <div><b>{Number(r.consumers).toLocaleString()}</b> consumers</div>
+      </div>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} style={{ transform: 'scale(1.3)' }} /> Feeder OFF
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} style={{ transform: 'scale(1.3)' }} /> Substation OFF
+        </label>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={card(C)}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header }}>
+        <div style={{ fontWeight: 600 }}>Substations (search across all feeders)</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ fontSize: 12, color: C.subtext }}>{filteredRows.length} result(s)</div>
+          <button onClick={() => { setQ(""); setShowAffectedOnly(false); setPage(1); }} style={btnOutline(C)}>Clear search</button>
+        </div>
+      </div>
+      {isMobile ? (
+        <div style={{ display: 'grid', gap: 8, padding: 8 }}>
+          {pageRows.map(r => <StationCard key={r.id} {...r} />)}
+          {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this search.</div>}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: C.subtext }}>
+                <th style={thStyle(C)}>Feeder</th>
+                <th style={thStyle(C)}>Substation</th>
+                <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
+                <th style={{ ...thStyle(C), textAlign: "center" }}>Feeder</th>
+                <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
+                <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map(r => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                  <td style={tdStyle}>
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(r.feeder), display: "inline-block", marginRight: 6 }}></span>
+                    {r.feeder}
+                  </td>
+                  <td style={tdStyle}>{r.name}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
+                      {r.effOut ? "OFF" : "ON"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {pageRows.length === 0 && (
+                <tr><td colSpan={6} style={{ padding: 24, textAlign: "center", color: C.subtext }}>No rows match this search.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, borderTop: `1px solid ${C.border}`, color: C.subtext }}>
+        <div>
+          Showing <b>{filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}</b>–<b>{Math.min(page * pageSize, filteredRows.length)}</b> of <b>{filteredRows.length}</b>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!isMobile && <button onClick={() => setPage(1)} disabled={page === 1} style={pagerBtn(C, page === 1)}>« First</button>}
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pagerBtn(C, page === 1)}>‹ Prev</button>
+          <div style={{ padding: "4px 8px" }}>{isMobile ? `Page ${page}` : `Page ${page} / ${totalPages}`}</div>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Next ›</button>
+          {!isMobile && <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Last »</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AdminFeederView(props) {
+  const { C, isMobile, feeders, selectedFeeder, setSelectedFeeder, feederOut,
+          toggleFeeder, pageRows, toggleStation, filteredRows, page, setPage, pageSize, totalPages } = props;
+
+  return (
+    <div style={card(C)}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 999, background: feederColor(selectedFeeder), display: "inline-block" }}></span>
+          <strong>{selectedFeeder}</strong>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
+            <span>{feederOut[selectedFeeder] ? "OFF" : "ON"}</span>
+            <input type="checkbox" checked={!!feederOut[selectedFeeder]} onChange={() => toggleFeeder(selectedFeeder)} />
+          </label>
+          <button onClick={() => setSelectedFeeder("ALL")} style={btnOutline(C)}>Show all feeders</button>
+        </div>
+      </div>
+
+      {isMobile ? (
+        <div style={{ display: 'grid', gap: 8, padding: 8 }}>
+          {pageRows.map(r => <StationRow key={r.id} r={r} C={C} feederOut={feederOut} toggleStation={toggleStation} selectedFeeder={selectedFeeder} />)}
+          {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this filter.</div>}
+      </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+            <thead>
+              <tr style={{ textAlign: "left", color: C.subtext }}>
+                <th style={thStyle(C)}>Substation</th>
+                <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
+                <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
+                <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map(r => <StationRow key={r.id} r={r} C={C} feederOut={feederOut} toggleStation={toggleStation} selectedFeeder={selectedFeeder} />)}
+              {pageRows.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: 24, textAlign: "center", color: C.subtext }}>No rows match this filter.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Pagination */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, borderTop: `1px solid ${C.border}`, color: C.subtext }}>
+        <div>
+          Showing <b>{filteredRows.length === 0 ? 0 : (page - 1) * pageSize + 1}</b>–<b>{Math.min(page * pageSize, filteredRows.length)}</b> of <b>{filteredRows.length}</b>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {!isMobile && <button onClick={() => setPage(1)} disabled={page === 1} style={pagerBtn(C, page === 1)}>« First</button>}
+          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={pagerBtn(C, page === 1)}>‹ Prev</button>
+          <div style={{ padding: "4px 8px" }}>{isMobile ? `Page ${page}` : `Page ${page} / ${totalPages}`}</div>
+          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Next ›</button>
+          {!isMobile && <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={pagerBtn(C, page === totalPages)}>Last »</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StationRow({ r, C, feederOut, toggleStation, selectedFeeder }) {
+  return (
+    <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
+      <td style={tdStyle}>{r.name}</td>
+      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
+      <td style={{ ...tdStyle, textAlign: "center" }}>
+        <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[selectedFeeder]} />
+      </td>
+      <td style={{ ...tdStyle, textAlign: "center" }}>
+        <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
+          {r.effOut ? "OFF" : "ON"}
+        </span>
+      </td>
+    </tr>
+  );
+}
+
+/* ---------- Shared small components/helpers ---------- */
 
 function LegendItem({ color, label, value, total }) {
   const pct = total > 0 ? Math.round((value / total) * 1000) / 10 : 0;
@@ -607,6 +607,16 @@ function LegendItem({ color, label, value, total }) {
   );
 }
 
+function KpiChip({ label, value, color }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 999, padding: '6px 10px' }}>
+      {color ? <span style={{ width: 12, height: 12, borderRadius: 2, background: color, display: 'inline-block' }} /> : null}
+      <strong>{label}</strong>
+      <span style={{ color: '#475569' }}> — {value}</span>
+    </div>
+  );
+}
+
 // ---- Small UI helpers ----
 const card = (C) => ({ background: C.card, border: `1px solid ${C.border}`, borderRadius: 10, overflow: "hidden" });
 const thStyle = (C) => ({ padding: 8, borderBottom: `1px solid ${C.border}` });
@@ -615,13 +625,11 @@ const btn = (C) => ({ padding: "8px 12px", borderRadius: 8, border: `1px solid $
 const btnOutline = (C) => ({ padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer" });
 const pagerBtn = (C, disabled) => ({ padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: disabled ? "#f1f5f9" : "#fff", color: disabled ? "#94a3b8" : C.text, cursor: disabled ? "not-allowed" : "pointer" });
 
-// Robust random id helper (fallback if crypto.randomUUID isn't available)
 function rid() {
   try { if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID(); } catch {}
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-// Simple responsive hook
 function useIsMobile(breakpoint = 768) {
   const [is, setIs] = React.useState(typeof window !== 'undefined' ? window.innerWidth < breakpoint : false);
   React.useEffect(() => {
@@ -632,7 +640,6 @@ function useIsMobile(breakpoint = 768) {
   return is;
 }
 
-// Deterministic feeder color from name
 function feederColor(name) {
   const h = hashStringToHue(name || "");
   return `hsl(${h}, 65%, 45%)`;

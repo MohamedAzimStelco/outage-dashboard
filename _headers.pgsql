@@ -1,2 +1,2 @@
 /.netlify/functions/update-status
-  Basic-Auth: yourUser:yourPassword
+  Basic-Auth: admin:Super123
