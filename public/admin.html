@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Outage Dashboard — Admin</title>
+</head>
+<body style="margin:0;background:#f8fafc">
+  <div id="root"></div>
+  <script>
+    window.VIEWER_ONLY = false;
+    window.USE_FUNCTIONS = true;         // enable publish/poll functions
+    window.REMOTE_CSV_URL = "/data/feeders_substations.csv"; // admin reads repo CSV
+  </script>
+  <script type="module" src="/src/main.jsx"></script>
+</body>
+</html>

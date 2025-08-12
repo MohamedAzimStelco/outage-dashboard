@@ -1,14 +1,6 @@
-<body>
-  <div id="root"></div>
-
-  <script>
-    // Decide mode from the URL: /  (viewer)   or   /?admin=1  (admin)
-    const params = new URLSearchParams(location.search);
-    window.VIEWER_ONLY   = params.get('admin') === '1' ? false : true; // default viewer
-    window.USE_FUNCTIONS = true; // use /api/status + /api/update-status
-    // Admin reads the repo CSV by default; viewer falls back to CSV if no live snapshot
-    window.REMOTE_CSV_URL = "/data/feeders_substations.csv";
-  </script>
-
-  <script type="module" src="/src/main.jsx"></script>
-</body>
+<div id="root"></div>
+<script>
+  window.VIEWER_ONLY = true;
+  window.USE_FUNCTIONS = true;
+</script>
+<script type="module" src="/src/main.jsx"></script>
