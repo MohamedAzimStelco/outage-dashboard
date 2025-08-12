@@ -7,10 +7,14 @@
   </head>
   <body style="margin:0;background:#f8fafc;">
     <div id="root"></div>
+
     <script>
-  window.VIEWER_ONLY = true;
-  window.USE_FUNCTIONS = true; // viewer polls /api/status
-</script>
+      // Viewer (/) vs Admin (/?admin=1)
+      const params = new URLSearchParams(location.search);
+      window.VIEWER_ONLY   = params.get('admin') === '1' ? false : true;
+      window.USE_FUNCTIONS = true;
+      window.REMOTE_CSV_URL = "/data/feeders_substations.csv";
+    </script>
 
     <script type="module" src="/src/main.jsx"></script>
   </body>
