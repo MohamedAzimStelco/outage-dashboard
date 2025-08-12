@@ -319,6 +319,23 @@ export default function OutageConsumersDashboard() {
                   <Tooltip formatter={(v) => Number(v).toLocaleString()} contentStyle={{ backgroundColor: "#ffffff", border: `1px solid ${C.border}`, color: C.text }} itemStyle={{ color: C.text }} labelStyle={{ color: C.subtext }} />
                 </PieChart>
               </ResponsiveContainer>
+              
+              {/* Empty state if neither live nor CSV have data */}
+              {!hasLive && uiTotals.total === 0 && (
+  <             div style={{ padding: 12, textAlign: 'center', color: C.subtext }}>
+                No data yet.
+                    {viewerOnly ? (
+                        <div>Ask the admin to open <b>/admin</b> and click <b>Publish live</b>.</div>
+                    ) : (
+                    <div>Load a CSV or toggle and Publish live.</div>
+                    )}
+                    <div style={{ marginTop: 8 }}>
+                    <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Retry loading CSV</button>
+                    </div>
+                </div>
+                )}
+
+
               {/* Center label with affected PERCENT */}
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
                 <div style={{ textAlign: "center" }}>
@@ -327,6 +344,15 @@ export default function OutageConsumersDashboard() {
                 </div>
               </div>
             </div>
+
+            <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>
+                {uiTotals.pct}%
+                </div>
+                <div style={{ fontSize: 14, color: C.subtext }}>
+                    {uiTotals.affected.toLocaleString()} affected of {uiTotals.total.toLocaleString()}
+                    
+                </div>
+
             {/* External legend below chart to avoid overlap */}
             <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", padding: "8px 0 12px" }} aria-label="Chart legend">
               <LegendItem color={C.affected} label="Affected" value={uiTotals.affected} total={uiTotals.total} />
@@ -643,8 +669,34 @@ async function publishLive() {
 }
 
 
+//has live data?
+// Is there usable live data?
+const hasLive =
+  viewerOnly && useFunctions && viewerSnap &&
+  (Number(viewerSnap.total) > 0 || Number(viewerSnap.subsTotal) > 0);
+
+// Prefer live numbers, else CSV totals
+const uiTotals = hasLive
+  ? {
+      affected: Number(viewerSnap.affected || 0),
+      total:    Number(viewerSnap.total || 0),
+      healthy:  Number(viewerSnap.healthy ?? Math.max(0, (viewerSnap.total || 0) - (viewerSnap.affected || 0))),
+      pct:      Number(viewerSnap.pct ?? ((viewerSnap.total ? (viewerSnap.affected / viewerSnap.total) * 100 : 0))).toFixed ? Number((viewerSnap.pct ?? ((viewerSnap.total ? (viewerSnap.affected / viewerSnap.total) * 100 : 0))).toFixed(1)) : (viewerSnap.pct ?? 0)
+    }
+  : totals;
+
+const uiStationCounts = hasLive
+  ? {
+      total:  Number(viewerSnap.subsTotal || 0),
+      off:    Number(viewerSnap.subsOff || 0),
+      on:     Number(viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal || 0) - (viewerSnap.subsOff || 0))),
+      offPct: Number(viewerSnap.offPct ?? ((viewerSnap.subsTotal ? (viewerSnap.subsOff / viewerSnap.subsTotal) * 100 : 0))).toFixed ? Number((viewerSnap.offPct ?? ((viewerSnap.subsTotal ? (viewerSnap.subsOff / viewerSnap.subsTotal) * 100 : 0))).toFixed(1)) : (viewerSnap.offPct ?? 0)
+    }
+  : (feederStationCounts ?? stationCounts);
 
 
+
+/*
 //live snapshot
 const uiTotals = (viewerOnly && useFunctions && viewerSnap)
   ? { affected: viewerSnap.affected ?? uiTotals.affected,
@@ -659,7 +711,7 @@ const uiStationCounts = (viewerOnly && useFunctions && viewerSnap)
       on:     viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal ?? 0) - (viewerSnap.subsOff ?? 0)),
       offPct: viewerSnap.offPct ?? ((viewerSnap.subsTotal ?? 0) ? Math.round(((viewerSnap.subsOff / viewerSnap.subsTotal) * 100)*10)/10 : 0) }
   : (feederStationCounts ?? uiStationCounts);
-
+*/
 
 // Deterministic feeder color from name
 function feederColor(name) {
