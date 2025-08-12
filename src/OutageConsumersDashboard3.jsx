@@ -3,9 +3,8 @@
 // - Import CSV (or auto-load default from /public/data/feeders_substations.csv)
 // - Pick a feeder from a dropdown (or "All feeders")
 // - Toggle feeder ON/OFF or individual substations
-// - Donut shows % affected; legend moved below (no overlap)
-// - **Mobile-first:** tables switch to tap-friendly **cards** on phones
-// CSV columns: feeder (or bay), name, consumers, optional isOut
+// - Donut shows % affected; legend is outside (no overlap)
+// - Mobile-first: tables become tap-friendly cards on phones
 
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
@@ -25,15 +24,14 @@ export default function OutageConsumersDashboard() {
 
   // Default CSV served from the public folder (works locally & on Netlify)
   const DEFAULT_CSV_URL = `${import.meta.env.BASE_URL}data/feeders_substations.csv`;
-  
+
+  // Optional runtime flags (safe to keep even if not used now)
   const viewerOnly   = typeof window !== 'undefined' && window.VIEWER_ONLY === true;
   const useFunctions = typeof window !== 'undefined' && window.USE_FUNCTIONS === true;
-  
   const REMOTE_CSV_URL =
-  (typeof window !== 'undefined' && window.REMOTE_CSV_URL) ||
-  DEFAULT_CSV_URL;
+    (typeof window !== 'undefined' && window.REMOTE_CSV_URL) ||
+    DEFAULT_CSV_URL;
   const DATA_CSV_URL = REMOTE_CSV_URL;
-
 
   // Light palette (color-blind friendly: Okabe–Ito)
   const C = {
@@ -44,7 +42,7 @@ export default function OutageConsumersDashboard() {
   };
 
   // Build feeder index and compute totals (effective outage = feederOut || station.isOut)
-  const { feeders, uiTotals } = useMemo(() => {
+  const { feeders, totals } = useMemo(() => {
     const groups = new Map();
     let total = 0, affected = 0;
 
@@ -65,7 +63,7 @@ export default function OutageConsumersDashboard() {
 
     const healthy = total - affected;
     const pct = total > 0 ? Math.round(((affected / total) * 100) * 10) / 10 : 0;
-    return { feeders: Array.from(groups.values()).sort((a,b)=>a.name.localeCompare(b.name)), uiTotals: { total, affected, healthy, pct } };
+    return { feeders: Array.from(groups.values()).sort((a,b)=>a.name.localeCompare(b.name)), totals: { total, affected, healthy, pct } };
   }, [stations, feederOut]);
 
   // Flat list with effective outage flags
@@ -89,6 +87,7 @@ export default function OutageConsumersDashboard() {
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
   useEffect(() => { if (page > totalPages) setPage(1); }, [filteredRows.length, pageSize]);
+
   // Auto-load default CSV on first load (silently fails if file is missing)
   useEffect(() => { loadDefaultCsv(true); }, []);
 
@@ -98,12 +97,12 @@ export default function OutageConsumersDashboard() {
   }, [filteredRows, page, pageSize]);
 
   const chartData = [
-    { name: "Affected", value: uiTotals.affected },
-    { name: "Healthy", value: uiTotals.healthy },
+    { name: "Affected", value: totals.affected },
+    { name: "Healthy", value: totals.healthy },
   ];
 
   // Substation counts (global and per selected feeder)
-  const uiStationCounts = useMemo(() => {
+  const stationCounts = useMemo(() => {
     const total = flatRows.length;
     let off = 0;
     for (const r of flatRows) if (r.effOut) off++;
@@ -291,17 +290,17 @@ export default function OutageConsumersDashboard() {
               Affected only
             </label>
             {!isMobile && (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
-              Page size
-              <select value={pageSize} onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 8 }}>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-                <option value={200}>200</option>
-                <option value={10000}>All</option>
-              </select>
-            </label>
-          )}
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
+                Page size
+                <select value={pageSize} onChange={(e)=>{ setPageSize(Number(e.target.value)); setPage(1); }} style={{ padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 8 }}>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                  <option value={200}>200</option>
+                  <option value={10000}>All</option>
+                </select>
+              </label>
+            )}
           </div>
         </div>
 
@@ -311,80 +310,85 @@ export default function OutageConsumersDashboard() {
             <div ref={chartBoxRef} style={{ position: "relative", height: isMobile ? 300 : 340, padding: 8, boxSizing: 'border-box' }}>
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                  <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={innerR} outerRadius={outerR} label={false} isAnimationActive={false}>
+                  <Pie
+                    data={chartData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={innerR}
+                    outerRadius={outerR}
+                    label={false}
+                    isAnimationActive={false}
+                  >
                     {chartData.map((entry, i) => (
                       <Cell key={`${entry.name}-${i}`} fill={entry.name === "Affected" ? C.affected : C.healthy} stroke="#ffffff" />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v) => Number(v).toLocaleString()} contentStyle={{ backgroundColor: "#ffffff", border: `1px solid ${C.border}`, color: C.text }} itemStyle={{ color: C.text }} labelStyle={{ color: C.subtext }} />
+                  <Tooltip
+                    formatter={(v) => Number(v).toLocaleString()}
+                    contentStyle={{ backgroundColor: "#ffffff", border: `1px solid ${C.border}`, color: C.text }}
+                    itemStyle={{ color: C.text }}
+                    labelStyle={{ color: C.subtext }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
-              
-              {/* Empty state if neither live nor CSV have data */}
-              {!hasLive && uiTotals.total === 0 && (
-  <             div style={{ padding: 12, textAlign: 'center', color: C.subtext }}>
-                No data yet.
-                    {viewerOnly ? (
-                        <div>Ask the admin to open <b>/admin</b> and click <b>Publish live</b>.</div>
-                    ) : (
-                    <div>Load a CSV or toggle and Publish live.</div>
-                    )}
-                    <div style={{ marginTop: 8 }}>
-                    <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Retry loading CSV</button>
-                    </div>
-                </div>
-                )}
 
+              {/* Empty state when no totals yet */}
+              {totals.total === 0 && (
+                <div style={{ padding: 12, textAlign: 'center', color: C.subtext }}>
+                  No data yet. {viewerOnly ? (
+                    <span>Ask the admin to open <b>?admin=1</b> and click <b>Publish live</b>.</span>
+                  ) : (
+                    <span>Load a CSV to begin.</span>
+                  )}
+                  <div style={{ marginTop: 8 }}>
+                    <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Retry loading CSV</button>
+                  </div>
+                </div>
+              )}
 
               {/* Center label with affected PERCENT */}
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>{uiTotals.pct}%</div>
-                  <div style={{ fontSize: 14, color: C.subtext }}>{uiTotals.affected.toLocaleString()} affected of {uiTotals.total.toLocaleString()}</div>
+                  <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>{totals.pct}%</div>
+                  <div style={{ fontSize: 14, color: C.subtext }}>{totals.affected.toLocaleString()} affected of {totals.total.toLocaleString()}</div>
                 </div>
               </div>
             </div>
 
-            <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>
-                {uiTotals.pct}%
-                </div>
-                <div style={{ fontSize: 14, color: C.subtext }}>
-                    {uiTotals.affected.toLocaleString()} affected of {uiTotals.total.toLocaleString()}
-                    
-                </div>
-
-            {/* External legend below chart to avoid overlap */}
+            {/* External legend below chart (no overlap) */}
             <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", padding: "8px 0 12px" }} aria-label="Chart legend">
-              <LegendItem color={C.affected} label="Affected" value={uiTotals.affected} total={uiTotals.total} />
-              <LegendItem color={C.healthy} label="Healthy" value={uiTotals.healthy} total={uiTotals.total} />
+              <LegendItem color={C.affected} label="Affected" value={totals.affected} total={totals.total} />
+              <LegendItem color={C.healthy} label="Healthy" value={totals.healthy} total={totals.total} />
             </div>
           </div>
+
           <div style={card(C)}>
             <div style={{ padding: 16 }}>
               <div style={{ fontSize: 12, color: C.subtext }}>Affected consumers</div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{uiTotals.affected.toLocaleString()}</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{totals.affected.toLocaleString()}</div>
 
               <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Total consumers</div>
-              <div style={{ fontSize: 24, fontWeight: 700 }}>{uiTotals.total.toLocaleString()}</div>
+              <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.total.toLocaleString()}</div>
 
               <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Affected percentage</div>
-              <div style={{ fontSize: 24, fontWeight: 700 }}>{uiTotals.pct}%</div>
+              <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.pct}%</div>
 
               <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}` }} />
 
               {/* Substation counts */}
               <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Substations OFF</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.affected }}>
-                {((feederStationCounts?.off ?? uiStationCounts.off)).toLocaleString()} <span style={{ fontSize: 12, color: C.subtext }}>
-                  of {(feederStationCounts?.total ?? uiStationCounts.total).toLocaleString()} ({(feederStationCounts?.offPct ?? uiStationCounts.offPct)}%)
+                {((feederStationCounts?.off ?? stationCounts.off)).toLocaleString()} <span style={{ fontSize: 12, color: C.subtext }}>
+                  of {(feederStationCounts?.total ?? stationCounts.total).toLocaleString()} ({(feederStationCounts?.offPct ?? stationCounts.offPct)}%)
                 </span>
               </div>
               <div style={{ marginTop: 8, fontSize: 12, color: C.subtext }}>Substations ON</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: C.healthy }}>
-                {((feederStationCounts ? feederStationCounts.on : uiStationCounts.on)).toLocaleString()}
+                {((feederStationCounts ? feederStationCounts.on : stationCounts.on)).toLocaleString()}
               </div>
             </div>
-          </div>
           </div>
         </div>
 
@@ -400,7 +404,7 @@ export default function OutageConsumersDashboard() {
             </div>
             {isMobile ? (
               <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {pageRows.map(r => StationCard(r))}
+                {pageRows.map(r => <StationCard key={r.id} {...r} />)}
                 {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this search.</div>}
               </div>
             ) : (
@@ -412,7 +416,7 @@ export default function OutageConsumersDashboard() {
                       <th style={thStyle(C)}>Substation</th>
                       <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
                       <th style={{ ...thStyle(C), textAlign: "center" }}>Feeder</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle(ON/OFF)</th>
+                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
                       <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
                     </tr>
                   </thead>
@@ -466,7 +470,7 @@ export default function OutageConsumersDashboard() {
             <div style={{ borderBottom: `1px solid ${C.border}`, padding: 8, background: C.header, fontWeight: 600 }}>Feeders</div>
             {isMobile ? (
               <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {feeders.map(f => FeederCard(f))}
+                {feeders.map(f => <FeederCard key={f.name} {...f} />)}
                 {feeders.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>Import a CSV to begin.</div>}
               </div>
             ) : (
@@ -530,7 +534,7 @@ export default function OutageConsumersDashboard() {
 
             {isMobile ? (
               <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-                {pageRows.map(r => StationCard(r))}
+                {pageRows.map(r => <StationCard key={r.id} {...r} />)}
                 {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this filter.</div>}
               </div>
             ) : (
@@ -540,7 +544,7 @@ export default function OutageConsumersDashboard() {
                     <tr style={{ textAlign: "left", color: C.subtext }}>
                       <th style={thStyle(C)}>Substation</th>
                       <th style={{ ...thStyle(C), textAlign: "right" }}>Consumers</th>
-                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle(ON/OFF)</th>
+                      <th style={{ ...thStyle(C), textAlign: "center" }}>Toggle (ON/OFF)</th>
                       <th style={{ ...thStyle(C), textAlign: "center" }}>Status</th>
                     </tr>
                   </thead>
@@ -588,7 +592,7 @@ export default function OutageConsumersDashboard() {
           CSV columns: <code>feeder</code> (or <code>bay</code>), <code>name</code>, <code>consumers</code>, optional <code>isOut</code>.
         </div>
       </div>
-    //</div>
+    </div>
   );
 }
 
@@ -627,91 +631,6 @@ function useIsMobile(breakpoint = 768) {
   }, [breakpoint]);
   return is;
 }
-
-//status polling state/effect
-const [viewerSnap, setViewerSnap] = useState(null);
-
-useEffect(() => {
-  if (!(viewerOnly && useFunctions)) return;
-
-  <button onClick={publishLive} style={btnOutline(C)}>Publish live</button>
-  const fetchStatus = async () => {
-    try {
-      const r = await fetch('/api/status', { cache: 'no-store' });
-      if (r.ok) setViewerSnap(await r.json());
-    } catch {}
-  };
-  fetchStatus();
-  const id = setInterval(fetchStatus, 30000); // 30s
-  document.addEventListener('visibilitychange', fetchStatus);
-  return () => { clearInterval(id); document.removeEventListener('visibilitychange', fetchStatus); };
-}, [viewerOnly, useFunctions]);
-
-//added new function
-async function publishLive() {
-  // Build the payload from current state
-  const payload = {
-    affected: totals.affected,
-    total: totals.total,
-    healthy: totals.healthy,
-    pct: totals.pct,
-    subsOff: (feederStationCounts ?? stationCounts).off,
-    subsOn:  (feederStationCounts ?? stationCounts).on,
-    subsTotal: (feederStationCounts ?? stationCounts).total,
-    offPct:  (feederStationCounts ?? stationCounts).offPct
-  };
-  const res = await fetch('/api/update-status', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) alert('Failed to publish');
-}
-
-
-//has live data?
-// Is there usable live data?
-const hasLive =
-  viewerOnly && useFunctions && viewerSnap &&
-  (Number(viewerSnap.total) > 0 || Number(viewerSnap.subsTotal) > 0);
-
-// Prefer live numbers, else CSV totals
-const uiTotals = hasLive
-  ? {
-      affected: Number(viewerSnap.affected || 0),
-      total:    Number(viewerSnap.total || 0),
-      healthy:  Number(viewerSnap.healthy ?? Math.max(0, (viewerSnap.total || 0) - (viewerSnap.affected || 0))),
-      pct:      Number(viewerSnap.pct ?? ((viewerSnap.total ? (viewerSnap.affected / viewerSnap.total) * 100 : 0))).toFixed ? Number((viewerSnap.pct ?? ((viewerSnap.total ? (viewerSnap.affected / viewerSnap.total) * 100 : 0))).toFixed(1)) : (viewerSnap.pct ?? 0)
-    }
-  : totals;
-
-const uiStationCounts = hasLive
-  ? {
-      total:  Number(viewerSnap.subsTotal || 0),
-      off:    Number(viewerSnap.subsOff || 0),
-      on:     Number(viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal || 0) - (viewerSnap.subsOff || 0))),
-      offPct: Number(viewerSnap.offPct ?? ((viewerSnap.subsTotal ? (viewerSnap.subsOff / viewerSnap.subsTotal) * 100 : 0))).toFixed ? Number((viewerSnap.offPct ?? ((viewerSnap.subsTotal ? (viewerSnap.subsOff / viewerSnap.subsTotal) * 100 : 0))).toFixed(1)) : (viewerSnap.offPct ?? 0)
-    }
-  : (feederStationCounts ?? stationCounts);
-
-
-
-/*
-//live snapshot
-const uiTotals = (viewerOnly && useFunctions && viewerSnap)
-  ? { affected: viewerSnap.affected ?? uiTotals.affected,
-      total:    viewerSnap.total ?? uiTotals.total,
-      healthy:  viewerSnap.healthy ?? Math.max(0, (viewerSnap.total ?? 0) - (viewerSnap.affected ?? 0)),
-      pct:      viewerSnap.pct ?? (viewerSnap.total ? Math.round(((viewerSnap.affected / viewerSnap.total) * 100)*10)/10 : 0) }
-  : uiTotals;
-
-const uiStationCounts = (viewerOnly && useFunctions && viewerSnap)
-  ? { total:  viewerSnap.subsTotal ?? 0,
-      off:    viewerSnap.subsOff ?? 0,
-      on:     viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal ?? 0) - (viewerSnap.subsOff ?? 0)),
-      offPct: viewerSnap.offPct ?? ((viewerSnap.subsTotal ?? 0) ? Math.round(((viewerSnap.subsOff / viewerSnap.subsTotal) * 100)*10)/10 : 0) }
-  : (feederStationCounts ?? uiStationCounts);
-*/
 
 // Deterministic feeder color from name
 function feederColor(name) {
