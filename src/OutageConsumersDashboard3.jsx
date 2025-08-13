@@ -17,6 +17,56 @@ export default function OutageConsumersDashboard() {
     return p.get("admin") === "1" ? false : true;
   })();
 
+
+    // Are Netlify Functions enabled? (set in index.html)
+    const useFunctions = typeof window !== "undefined" && window.USE_FUNCTIONS === true;
+
+// Live snapshot for viewer mode
+const [viewerSnap, setViewerSnap] = useState(null);
+
+useEffect(() => {
+  if (!(viewerOnly && useFunctions)) return;
+  const fetchStatus = async () => {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (r.ok) setViewerSnap(await r.json());
+    } catch (e) {
+      console.warn('status fetch failed', e);
+    }
+  };
+  fetchStatus();
+  const id = setInterval(fetchStatus, 30000); // 30s poll
+  document.addEventListener('visibilitychange', fetchStatus);
+  return () => {
+    clearInterval(id);
+    document.removeEventListener('visibilitychange', fetchStatus);
+  };
+}, [viewerOnly, useFunctions]);
+
+
+const hasLive = viewerOnly && useFunctions && viewerSnap &&
+  (Number(viewerSnap.total) > 0 || Number(viewerSnap.subsTotal) > 0);
+
+const uiTotals = hasLive
+  ? {
+      affected: Number(viewerSnap.affected || 0),
+      total:    Number(viewerSnap.total || 0),
+      healthy:  Number(viewerSnap.healthy ?? Math.max(0, (viewerSnap.total || 0) - (viewerSnap.affected || 0))),
+      pct:      Number(viewerSnap.pct ?? (viewerSnap.total ? Math.round((viewerSnap.affected / viewerSnap.total) * 1000)/10 : 0))
+    }
+  : totals;
+
+const uiCounts = hasLive
+  ? {
+      total:  Number(viewerSnap.subsTotal || 0),
+      off:    Number(viewerSnap.subsOff || 0),
+      on:     Number(viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal || 0) - (viewerSnap.subsOff || 0))),
+      offPct: Number(viewerSnap.offPct ?? (viewerSnap.subsTotal ? Math.round((viewerSnap.subsOff / viewerSnap.subsTotal) * 1000)/10 : 0))
+    }
+  : { total: stationCounts.total, off: stationCounts.off, on: stationCounts.on, offPct: stationCounts.offPct };
+
+
+
   // If you set this in index.html you can override the CSV path:
   const DEFAULT_CSV_URL = `${import.meta.env.BASE_URL}data/feeders_substations.csv`;
   const REMOTE_CSV_URL =
@@ -216,6 +266,12 @@ export default function OutageConsumersDashboard() {
             <label htmlFor="csvFile" style={btn(C)}>Import CSV</label>
             <button onClick={exportCsv} style={btnOutline(C)}>Export</button>
             <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Load default CSV</button>
+            <button onClick={primeAuth} style={btnOutline(C)}>Sign in to publish</button>
+            <button onClick={publishLive} style={btnOutline(C)}>Publish live</button>
+
+
+
+
 
             {/* Feeder dropdown */}
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
@@ -403,7 +459,7 @@ export default function OutageConsumersDashboard() {
 
         {/* Small note */}
         <div style={{ fontSize: 12, color: C.subtext, marginTop: 8 }}>
-          CSV columns: <code>feeder</code> (or <code>bay</code>), <code>name</code>, <code>consumers</code>, optional <code>isOut</code>.
+          For further quaries please call 1545.
         </div>
       </div>
     </div>
