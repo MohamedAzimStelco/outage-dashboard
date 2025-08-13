@@ -1,6 +1,23 @@
-<script>
-  const p = new URLSearchParams(location.search);
-  window.VIEWER_ONLY   = p.get('admin') === '1' ? false : true; // default viewer
-  window.USE_FUNCTIONS = true; // if you wired Netlify Functions; otherwise set false
-  window.REMOTE_CSV_URL = "/data/feeders_substations.csv";
-</script>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 👇 This line fixes the warning -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f8fafc" />
+    <title>Outage Consumers Dashboard</title>
+  </head>
+  <body style="margin:0;background:#f8fafc;">
+    <div id="root"></div>
+
+    <script>
+      // Switch admin by adding ?admin=1 to the URL
+      const p = new URLSearchParams(location.search);
+      window.VIEWER_ONLY    = p.get('admin') === '1' ? false : true; // viewer by default
+      window.USE_FUNCTIONS  = true;   // set to false if you didn't wire Netlify Functions
+      window.REMOTE_CSV_URL = "/data/feeders_substations.csv"; // CSV in repo/public/data/
+    </script>
+
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
