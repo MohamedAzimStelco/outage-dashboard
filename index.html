@@ -1,6 +1,6 @@
 <script>
   const p = new URLSearchParams(location.search);
   window.VIEWER_ONLY   = p.get('admin') === '1' ? false : true; // default viewer
-  window.USE_FUNCTIONS = true; // turn on /api/status + /api/update-status
-  window.REMOTE_CSV_URL = "/data/feeders_substations.csv"; // repo CSV
+  window.USE_FUNCTIONS = true; // if you wired Netlify Functions; otherwise set false
+  window.REMOTE_CSV_URL = "/data/feeders_substations.csv";
 </script>

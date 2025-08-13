@@ -1,7 +1,8 @@
-// File: src/OutageConsumersDashboard.jsx
+// File: src/OutageConsumersDashboard.jsx (fixed)
 // Modes:
 //  - Viewer (default): donut + % + OFF/ON counts, no toggles/tables
 //  - Admin (?admin=1): full UI (import/export, toggles, tables)
+// Live sync: viewer polls /api/status; admin can Publish live to /api/update-status
 
 import React, { useEffect, useMemo, useState } from "react";
 import Papa from "papaparse";
@@ -16,64 +17,15 @@ export default function OutageConsumersDashboard() {
     // viewer by default; admin ONLY when ?admin=1
     return p.get("admin") === "1" ? false : true;
   })();
+  const useFunctions = typeof window !== "undefined" && window.USE_FUNCTIONS === true;
 
-
-    // Are Netlify Functions enabled? (set in index.html)
-    const useFunctions = typeof window !== "undefined" && window.USE_FUNCTIONS === true;
-
-// Live snapshot for viewer mode
-const [viewerSnap, setViewerSnap] = useState(null);
-
-useEffect(() => {
-  if (!(viewerOnly && useFunctions)) return;
-  const fetchStatus = async () => {
-    try {
-      const r = await fetch('/api/status', { cache: 'no-store' });
-      if (r.ok) setViewerSnap(await r.json());
-    } catch (e) {
-      console.warn('status fetch failed', e);
-    }
-  };
-  fetchStatus();
-  const id = setInterval(fetchStatus, 30000); // 30s poll
-  document.addEventListener('visibilitychange', fetchStatus);
-  return () => {
-    clearInterval(id);
-    document.removeEventListener('visibilitychange', fetchStatus);
-  };
-}, [viewerOnly, useFunctions]);
-
-
-const hasLive = viewerOnly && useFunctions && viewerSnap &&
-  (Number(viewerSnap.total) > 0 || Number(viewerSnap.subsTotal) > 0);
-
-const uiTotals = hasLive
-  ? {
-      affected: Number(viewerSnap.affected || 0),
-      total:    Number(viewerSnap.total || 0),
-      healthy:  Number(viewerSnap.healthy ?? Math.max(0, (viewerSnap.total || 0) - (viewerSnap.affected || 0))),
-      pct:      Number(viewerSnap.pct ?? (viewerSnap.total ? Math.round((viewerSnap.affected / viewerSnap.total) * 1000)/10 : 0))
-    }
-  : totals;
-
-const uiCounts = hasLive
-  ? {
-      total:  Number(viewerSnap.subsTotal || 0),
-      off:    Number(viewerSnap.subsOff || 0),
-      on:     Number(viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal || 0) - (viewerSnap.subsOff || 0))),
-      offPct: Number(viewerSnap.offPct ?? (viewerSnap.subsTotal ? Math.round((viewerSnap.subsOff / viewerSnap.subsTotal) * 1000)/10 : 0))
-    }
-  : { total: stationCounts.total, off: stationCounts.off, on: stationCounts.on, offPct: stationCounts.offPct };
-
-
-
-  // If you set this in index.html you can override the CSV path:
+  // CSV path (can be set in index.html as window.REMOTE_CSV_URL)
   const DEFAULT_CSV_URL = `${import.meta.env.BASE_URL}data/feeders_substations.csv`;
   const REMOTE_CSV_URL =
     (typeof window !== "undefined" && window.REMOTE_CSV_URL) || DEFAULT_CSV_URL;
   const DATA_CSV_URL = REMOTE_CSV_URL;
 
-  // ----- COLORS (okabe-ito) -----
+  // ----- COLORS (Okabe–Ito colorblind-safe) -----
   const C = {
     bg: "#f8fafc", card: "#ffffff", border: "#e2e8f0", text: "#0f172a",
     subtext: "#475569", accent: "#2563eb", accentBorder: "#3b82f6",
@@ -90,7 +42,7 @@ const uiCounts = hasLive
   const [pageSize, setPageSize] = useState(50);
   const [selectedFeeder, setSelectedFeeder] = useState("ALL"); // "ALL" or feeder name
 
-  // ----- DATA BUILD -----
+  // ----- DATA BUILD (must come BEFORE any usage) -----
   const { feeders, totals } = useMemo(() => {
     const groups = new Map();
     let total = 0, affected = 0;
@@ -115,7 +67,7 @@ const uiCounts = hasLive
     return { feeders: Array.from(groups.values()).sort((a,b)=>a.name.localeCompare(b.name)), totals: { total, affected, healthy, pct } };
   }, [stations, feederOut]);
 
-  // Flat with effective outage flags
+  // Flat list with effective outage flags
   const flatRows = useMemo(() => {
     const list = [];
     for (const f of feeders) {
@@ -166,9 +118,50 @@ const uiCounts = hasLive
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, page, pageSize]);
 
+  // ----- VIEWER: poll /api/status and prefer live snapshot (AFTER totals/stationCounts exist) -----
+  const [viewerSnap, setViewerSnap] = useState(null);
+
+  useEffect(() => {
+    if (!(viewerOnly && useFunctions)) return;
+    const fetchStatus = async () => {
+      try {
+        const r = await fetch('/api/status', { cache: 'no-store' });
+        if (r.ok) setViewerSnap(await r.json());
+      } catch (e) {
+        console.warn('status fetch failed', e);
+      }
+    };
+    fetchStatus();
+    const id = setInterval(fetchStatus, 30000); // 30s poll
+    const onVis = () => { if (!document.hidden) fetchStatus(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); };
+  }, [viewerOnly, useFunctions]);
+
+  const hasLive = viewerOnly && useFunctions && viewerSnap &&
+    (Number(viewerSnap.total) > 0 || Number(viewerSnap.subsTotal) > 0);
+
+  const uiTotals = hasLive
+    ? {
+        affected: Number(viewerSnap.affected || 0),
+        total:    Number(viewerSnap.total || 0),
+        healthy:  Number(viewerSnap.healthy ?? Math.max(0, (viewerSnap.total || 0) - (viewerSnap.affected || 0))),
+        pct:      Number(viewerSnap.pct ?? (viewerSnap.total ? Math.round((viewerSnap.affected / viewerSnap.total) * 1000)/10 : 0))
+      }
+    : totals;
+
+  const uiCounts = hasLive
+    ? {
+        total:  Number(viewerSnap.subsTotal || 0),
+        off:    Number(viewerSnap.subsOff || 0),
+        on:     Number(viewerSnap.subsOn ?? Math.max(0, (viewerSnap.subsTotal || 0) - (viewerSnap.subsOff || 0))),
+        offPct: Number(viewerSnap.offPct ?? (viewerSnap.subsTotal ? Math.round((viewerSnap.subsOff / viewerSnap.subsTotal) * 1000)/10 : 0))
+      }
+    : { total: stationCounts.total, off: stationCounts.off, on: stationCounts.on, offPct: stationCounts.offPct };
+
   const chartData = [
-    { name: "Affected", value: totals.affected },
-    { name: "Healthy", value: totals.healthy },
+    { name: "Affected", value: uiTotals.affected },
+    { name: "Healthy", value: uiTotals.healthy },
   ];
 
   // Mobile + donut sizing
@@ -255,6 +248,40 @@ const uiCounts = hasLive
     setStations(prev => prev.map(s => (s.id === id ? { ...s, isOut: !s.isOut } : s)));
   }
 
+  function primeAuth() {
+    // Navigate to protected function so the browser shows the Basic-Auth dialog once.
+    window.location.href = '/api/update-status?login=1';
+  }
+
+  async function publishLive() {
+    if (!useFunctions) return alert('Server functions are disabled.');
+    const payload = {
+      affected: totals.affected,
+      total: totals.total,
+      healthy: totals.healthy,
+      pct: totals.pct,
+      subsOff: stationCounts.off,
+      subsOn:  stationCounts.on,
+      subsTotal: stationCounts.total,
+      offPct:  stationCounts.offPct
+    };
+    try {
+      const res = await fetch('/api/update-status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const msg = await res.text();
+        alert('Publish failed: ' + msg + '\nTip: click "Sign in to publish" first and enter username/password.');
+        return;
+      }
+      alert('Published live.');
+    } catch (e) {
+      alert('Network error while publishing: ' + e.message);
+    }
+  }
+
   // ----- UI -----
   return (
     <div style={{ minHeight: "100vh", padding: 12, background: C.bg, color: C.text }}>
@@ -266,12 +293,8 @@ const uiCounts = hasLive
             <label htmlFor="csvFile" style={btn(C)}>Import CSV</label>
             <button onClick={exportCsv} style={btnOutline(C)}>Export</button>
             <button onClick={() => loadDefaultCsv(false)} style={btnOutline(C)}>Load default CSV</button>
-            <button onClick={primeAuth} style={btnOutline(C)}>Sign in to publish</button>
-            <button onClick={publishLive} style={btnOutline(C)}>Publish live</button>
-
-
-
-
+            {useFunctions && <button onClick={primeAuth} style={btnOutline(C)}>Sign in to publish</button>}
+            {useFunctions && <button onClick={publishLive} style={btnOutline(C)}>Publish live</button>}
 
             {/* Feeder dropdown */}
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: C.subtext }}>
@@ -346,7 +369,7 @@ const uiCounts = hasLive
               </ResponsiveContainer>
 
               {/* Empty state when no totals yet */}
-              {totals.total === 0 && (
+              {uiTotals.total === 0 && (
                 <div style={{ padding: 12, textAlign: 'center', color: C.subtext }}>
                   No data yet. {viewerOnly ? (
                     <span>Ask the admin to open <b>?admin=1</b> and update.</span>
@@ -362,8 +385,8 @@ const uiCounts = hasLive
               {/* Center label with affected PERCENT */}
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", pointerEvents: "none" }}>
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>{totals.pct}%</div>
-                  <div style={{ fontSize: 14, color: C.subtext }}>{totals.affected.toLocaleString()} affected of {totals.total.toLocaleString()}</div>
+                  <div style={{ fontSize: pctFont, fontWeight: 800, lineHeight: 1, color: C.affected }}>{uiTotals.pct}%</div>
+                  <div style={{ fontSize: 14, color: C.subtext }}>{uiTotals.affected.toLocaleString()} affected of {uiTotals.total.toLocaleString()}</div>
                 </div>
               </div>
             </div>
@@ -371,13 +394,13 @@ const uiCounts = hasLive
             {/* Legend / KPI row under the chart */}
             {!viewerOnly ? (
               <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap", padding: "8px 0 12px" }} aria-label="Chart legend">
-                <LegendItem color={C.affected} label="Affected" value={totals.affected} total={totals.total} />
-                <LegendItem color={C.healthy} label="Healthy" value={totals.healthy} total={totals.total} />
+                <LegendItem color={C.affected} label="Affected" value={uiTotals.affected} total={uiTotals.total} />
+                <LegendItem color={C.healthy} label="Healthy" value={uiTotals.healthy} total={uiTotals.total} />
               </div>
             ) : (
               <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", padding: "8px 0 12px" }}>
-                <KpiChip label="Substations OFF" value={stationCounts.off.toLocaleString()} color={C.affected} />
-                <KpiChip label="Substations ON"  value={stationCounts.on.toLocaleString()}  color={C.healthy} />
+                <KpiChip label="Substations OFF" value={uiCounts.off.toLocaleString()} color={C.affected} />
+                <KpiChip label="Substations ON"  value={uiCounts.on.toLocaleString()}  color={C.healthy} />
               </div>
             )}
           </div>
@@ -387,13 +410,13 @@ const uiCounts = hasLive
             <div style={card(C)}>
               <div style={{ padding: 16 }}>
                 <div style={{ fontSize: 12, color: C.subtext }}>Affected consumers</div>
-                <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{totals.affected.toLocaleString()}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: C.affected }}>{uiTotals.affected.toLocaleString()}</div>
 
                 <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Total consumers</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.total.toLocaleString()}</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{uiTotals.total.toLocaleString()}</div>
 
                 <div style={{ marginTop: 12, fontSize: 12, color: C.subtext }}>Affected percentage</div>
-                <div style={{ fontSize: 24, fontWeight: 700 }}>{totals.pct}%</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{uiTotals.pct}%</div>
 
                 <div style={{ marginTop: 16, borderTop: `1px solid ${C.border}` }} />
 
@@ -459,7 +482,7 @@ const uiCounts = hasLive
 
         {/* Small note */}
         <div style={{ fontSize: 12, color: C.subtext, marginTop: 8 }}>
-          For further quaries please call 1545.
+          CSV columns: <code>feeder</code> (or <code>bay</code>), <code>name</code>, <code>consumers</code>, optional <code>isOut</code>.
         </div>
       </div>
     </div>
@@ -487,10 +510,10 @@ function AdminAllView(props) {
       </div>
       <div style={{ display: 'flex', gap: 12 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} style={{ transform: 'scale(1.3)' }} /> Feeder OFF
+          <input type="checkbox" checked={!!feederOut[r.feeder]} onChange={() => toggleFeeder(r.feeder)} style={{ transform: 'scale(1.2)' }} /> Feeder OFF
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} style={{ transform: 'scale(1.3)' }} /> Substation OFF
+          <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[r.feeder]} style={{ transform: 'scale(1.2)' }} /> Substation OFF
         </label>
       </div>
     </div>
@@ -571,7 +594,7 @@ function AdminAllView(props) {
 }
 
 function AdminFeederView(props) {
-  const { C, isMobile, feeders, selectedFeeder, setSelectedFeeder, feederOut,
+  const { C, isMobile, selectedFeeder, setSelectedFeeder, feederOut,
           toggleFeeder, pageRows, toggleStation, filteredRows, page, setPage, pageSize, totalPages } = props;
 
   return (
@@ -592,9 +615,26 @@ function AdminFeederView(props) {
 
       {isMobile ? (
         <div style={{ display: 'grid', gap: 8, padding: 8 }}>
-          {pageRows.map(r => <StationRow key={r.id} r={r} C={C} feederOut={feederOut} toggleStation={toggleStation} selectedFeeder={selectedFeeder} />)}
+          {pageRows.map(r => (
+            <div key={r.id} style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: 12, background: C.card, display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <div style={{ fontWeight: 600 }}>{r.name}</div>
+                <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
+                  {r.effOut ? 'OFF' : 'ON'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', color: C.subtext }}>
+                <div><b>{Number(r.consumers).toLocaleString()}</b> consumers</div>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[selectedFeeder]} style={{ transform: 'scale(1.2)' }} /> Substation OFF
+                </label>
+              </div>
+            </div>
+          ))}
           {pageRows.length === 0 && <div style={{ padding: 24, textAlign: 'center', color: C.subtext }}>No rows match this filter.</div>}
-      </div>
+        </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
@@ -607,7 +647,20 @@ function AdminFeederView(props) {
               </tr>
             </thead>
             <tbody>
-              {pageRows.map(r => <StationRow key={r.id} r={r} C={C} feederOut={feederOut} toggleStation={toggleStation} selectedFeeder={selectedFeeder} />)}
+              {pageRows.map(r => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
+                  <td style={tdStyle}>{r.name}</td>
+                  <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[selectedFeeder]} />
+                  </td>
+                  <td style={{ ...tdStyle, textAlign: "center" }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
+                      {r.effOut ? "OFF" : "ON"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
               {pageRows.length === 0 && (
                 <tr><td colSpan={4} style={{ padding: 24, textAlign: "center", color: C.subtext }}>No rows match this filter.</td></tr>
               )}
@@ -630,23 +683,6 @@ function AdminFeederView(props) {
         </div>
       </div>
     </div>
-  );
-}
-
-function StationRow({ r, C, feederOut, toggleStation, selectedFeeder }) {
-  return (
-    <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
-      <td style={tdStyle}>{r.name}</td>
-      <td style={{ ...tdStyle, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Number(r.consumers).toLocaleString()}</td>
-      <td style={{ ...tdStyle, textAlign: "center" }}>
-        <input type="checkbox" checked={!!r.isOut} onChange={() => toggleStation(r.id)} disabled={!!feederOut[selectedFeeder]} />
-      </td>
-      <td style={{ ...tdStyle, textAlign: "center" }}>
-        <span style={{ padding: "2px 8px", borderRadius: 999, border: `1px solid ${r.effOut ? C.affectedBorder : C.healthyBorder}`, background: r.effOut ? C.affectedBg : C.healthyBg, color: r.effOut ? C.affected : C.healthy }}>
-          {r.effOut ? "OFF" : "ON"}
-        </span>
-      </td>
-    </tr>
   );
 }
 
